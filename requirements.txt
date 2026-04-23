@@ -1,2 +1,4 @@
+FinMind
 requests
 pandas
+tqdm
