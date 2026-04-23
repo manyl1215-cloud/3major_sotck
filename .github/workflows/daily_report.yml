@@ -5,6 +5,11 @@ on:
     - cron: '30 7 * * 1-5' # 國際標準時間 07:30 = 台灣時間 15:30
   workflow_dispatch: # 允許手動點擊執行
 
+- name: Install dependencies
+  run: |
+    pip install FinMind requests pandas
+
+
 jobs:
   build:
     runs-on: ubuntu-latest
