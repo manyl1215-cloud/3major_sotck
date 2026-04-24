@@ -1,4 +1,4 @@
-name: Daily Stock Report
+name: Daily Stock Report V6
 
 on:
   schedule:
