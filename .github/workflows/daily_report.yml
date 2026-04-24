@@ -1,4 +1,4 @@
-name: Daily Stock Report
+name: Daily Stock Report V8 final
 
 on:
   schedule:
