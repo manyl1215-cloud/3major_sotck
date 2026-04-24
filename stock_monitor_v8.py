@@ -369,4 +369,4 @@ if __name__ == "__main__":
         print(f"\n✗ 發生未預期的錯誤: {e}")
         import traceback
         traceback.print_exc()
-        sys.exit(
+        sys.exit(1)
