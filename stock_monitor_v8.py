@@ -21,7 +21,7 @@ from FinMind.data import DataLoader
 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
-STOCK_LIST = os.environ.get("STOCK_LIST", "2330,2317,2454,3711,9933,4104").split(",")
+STOCK_LIST = os.environ.get("STOCK_LIST", "2330,2317,2454,3711,2308,2376,2347,9933,8069,3037,4958,2356,2891,2881,2882,2834,2451,6166,4104,1476,2409,00981A,0050").split(",")
 MONITOR_DAYS = int(os.environ.get("MONITOR_DAYS", "15"))
 
 def main():
