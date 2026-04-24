@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-股票三大法人監控系統 v8 (Updated)
-自動抓取三大法人買賣超數據，計算連買/連賣，並透過 Telegram 發送通知。
+股票三大法人監控系統 v8 (Final)
+自動抓取三大法人買賣超數據、股價、成交量等資訊，計算連買/連賣，並透過 Telegram 發送通知。
 
 功能：
 - 自動安裝缺失的依賴套件
-- 抓取指定股票的三大法人數據
-- 計算連續買賣天數
+- 抓取指定股票的三大法人數據、股價、成交量
+- 計算連續買賣天數、漲跌幅、量增量減
 - 發送格式化的 Telegram 通知
 """
 
@@ -63,7 +63,7 @@ TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
 # 持股清單 (預設範例: 台積電、鴻海、聯發科)
-STOCK_LIST = os.environ.get("STOCK_LIST", "2330,2317,2454,3037,4958,3711,2308,2376,2347,9933").split(",")
+STOCK_LIST = os.environ.get("STOCK_LIST", "2330,2317,2454,3711,2308,2376,2347,9933,8069,3037,4958,2356,2891,2881,2882,2834,2451,6166,4104,1476,2409,00981A,0050").split(",")
 
 # 監控天數 (預設: 15 天)
 MONITOR_DAYS = int(os.environ.get("MONITOR_DAYS", "15"))
@@ -72,13 +72,68 @@ MONITOR_DAYS = int(os.environ.get("MONITOR_DAYS", "15"))
 # 核心功能
 # ==========================================
 
-def is_trading_day(date_str):
-    """
-    檢查是否為交易日
-    簡單判斷: 排除週末 (假設台灣股市週一至週五交易)
-    """
-    date_obj = datetime.strptime(date_str, '%Y-%m-%d')
-    return date_obj.weekday() < 5  # 0-4 代表週一至週五
+def get_stock_info(stock_id):
+    """獲取股票的中文名稱與產業類別"""
+    try:
+        dl = DataLoader()
+        df_info = dl.taiwan_stock_info()
+        stock_info = df_info[df_info['stock_id'] == stock_id]
+        
+        if not stock_info.empty:
+            # 取第一筆記錄
+            row = stock_info.iloc[0]
+            return {
+                'name': row['stock_name'],
+                'industry': row['industry_category']
+            }
+    except Exception as e:
+        print(f"  ✗ 獲取 {stock_id} 的基本資訊失敗: {e}")
+    
+    return {'name': stock_id, 'industry': '未知'}
+
+def get_today_stock_price(stock_id):
+    """獲取今日的股價、成交量與漲跌幅"""
+    try:
+        dl = DataLoader()
+        end_date = datetime.now().strftime('%Y-%m-%d')
+        start_date = (datetime.now() - timedelta(days=5)).strftime('%Y-%m-%d')
+        
+        df = dl.taiwan_stock_daily(
+            stock_id=stock_id,
+            start_date=start_date,
+            end_date=end_date
+        )
+        
+        if df.empty:
+            return None
+        
+        # 取最新的交易日資料
+        latest = df.iloc[-1]
+        
+        # 計算漲跌幅
+        if len(df) >= 2:
+            prev_close = df.iloc[-2]['close']
+            today_close = latest['close']
+            change_pct = ((today_close - prev_close) / prev_close) * 100
+            
+            # 計算量增量減
+            prev_volume = df.iloc[-2]['Trading_Volume']
+            today_volume = latest['Trading_Volume']
+            volume_change = "量增" if today_volume > prev_volume else "量減" if today_volume < prev_volume else "持平"
+        else:
+            change_pct = 0
+            volume_change = "無前日"
+        
+        return {
+            'close': latest['close'],
+            'volume': latest['Trading_Volume'],
+            'volume_change': volume_change,
+            'change_pct': change_pct,
+            'date': latest['date']
+        }
+    except Exception as e:
+        print(f"  ✗ 獲取 {stock_id} 的股價資訊失敗: {e}")
+        return None
 
 def get_institutional_data(stock_id, days=15):
     """獲取特定股票的三大法人數據"""
@@ -87,7 +142,6 @@ def get_institutional_data(stock_id, days=15):
         end_date = datetime.now().strftime('%Y-%m-%d')
         start_date = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
         
-        print(f"  抓取 {stock_id} 的數據 ({start_date} 至 {end_date})...")
         df = dl.taiwan_stock_institutional_investors(
             stock_id=stock_id,
             start_date=start_date,
@@ -95,7 +149,7 @@ def get_institutional_data(stock_id, days=15):
         )
         return df
     except Exception as e:
-        print(f"  ✗ 抓取 {stock_id} 失敗: {e}")
+        print(f"  ✗ 抓取 {stock_id} 的法人數據失敗: {e}")
         return None
 
 def process_data(df):
@@ -155,15 +209,40 @@ def process_data(df):
     last_date = pivot_df.index[0]
     return results, last_date
 
-def format_message(stock_id, results, update_date):
+def format_message(stock_id, stock_info, price_info, institutional_analysis, update_date):
     """格式化 Telegram 訊息"""
-    if results is None:
+    if institutional_analysis is None:
         return f"❌ 無法獲取 {stock_id} 的數據\n"
     
-    msg = f"📊 *股票代號: {stock_id}* ({update_date})\n"
+    # 股票基本資訊
+    stock_name = stock_info['name']
+    industry = stock_info['industry']
+    
+    msg = f"📊 *{stock_name} ({stock_id})* | {industry}\n"
+    msg += f"📅 {update_date}\n"
+    
+    # 股價與成交量資訊
+    if price_info:
+        close_price = price_info['close']
+        volume = price_info['volume']
+        volume_change = price_info['volume_change']
+        change_pct = price_info['change_pct']
+        
+        # 漲跌顏色
+        if change_pct > 0:
+            change_emoji = "📈"
+        elif change_pct < 0:
+            change_emoji = "📉"
+        else:
+            change_emoji = "➡️"
+        
+        msg += f"💰 收盤: ${close_price:.2f} {change_emoji} {change_pct:+.2f}%\n"
+        msg += f"📈 成交量: {volume:,} 張 ({volume_change})\n"
+    
     msg += "━━━━━━━━━━━━━━━━━━━━━━━━\n"
     
-    for name, data in results.items():
+    # 三大法人資訊
+    for name, data in institutional_analysis.items():
         net = data['net'] / 1000  # 換算成張數
         con = data['consecutive']
         
@@ -215,41 +294,52 @@ def send_telegram_notification(message):
 
 def main():
     """主程式"""
-    print("=" * 50)
-    print("股票三大法人監控系統 v8 (Updated)")
-    print("=" * 50)
+    print("=" * 60)
+    print("股票三大法人監控系統 v8 (Final)")
+    print("=" * 60)
     print(f"執行時間: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"監控股票: {', '.join(STOCK_LIST)}")
     print(f"監控天數: {MONITOR_DAYS} 天")
-    print("=" * 50 + "\n")
+    print("=" * 60 + "\n")
     
     full_report = ""
     success_count = 0
     
     for stock_id in STOCK_LIST:
         print(f"正在處理 {stock_id}...")
+        
+        # 獲取股票基本資訊
+        stock_info = get_stock_info(stock_id)
+        print(f"  ✓ 股票名稱: {stock_info['name']}")
+        
+        # 獲取今日股價資訊
+        price_info = get_today_stock_price(stock_id)
+        if price_info:
+            print(f"  ✓ 股價資訊已取得")
+        
+        # 獲取法人數據
         df = get_institutional_data(stock_id, days=MONITOR_DAYS)
         
         if df is not None and not df.empty:
             analysis, last_date = process_data(df)
             if analysis is not None:
-                msg = format_message(stock_id, analysis, last_date)
+                msg = format_message(stock_id, stock_info, price_info, analysis, last_date)
                 full_report += msg
                 success_count += 1
                 print(f"  ✓ {stock_id} 處理完成")
             else:
                 print(f"  ✗ {stock_id} 數據處理失敗")
         else:
-            print(f"  ✗ 無法獲取 {stock_id} 的數據")
+            print(f"  ✗ 無法獲取 {stock_id} 的法人數據")
         print()
     
-    print("=" * 50)
+    print("=" * 60)
     if full_report:
         print(f"成功處理 {success_count}/{len(STOCK_LIST)} 檔股票\n")
         send_telegram_notification(full_report)
     else:
         print("✗ 沒有可報告的數據")
-    print("=" * 50)
+    print("=" * 60)
 
 if __name__ == "__main__":
     try:
@@ -259,4 +349,6 @@ if __name__ == "__main__":
         sys.exit(0)
     except Exception as e:
         print(f"\n✗ 發生未預期的錯誤: {e}")
-        sys.exit(1)
+        import traceback
+        traceback.print_exc()
+        sys.exit
